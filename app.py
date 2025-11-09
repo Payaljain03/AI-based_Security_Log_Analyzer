@@ -6,6 +6,7 @@ import faiss
 import json
 import xml.etree.ElementTree as ET
 import os
+import sys
   
 
 
@@ -71,6 +72,8 @@ def build_faiss_index(embeddings):
 # Main Workflow
 # ----------------------------
 if uploaded_file is not None:
+    sys.path.append(os.path.dirname(__file__))
+  
     from sentence_transformers import SentenceTransformer
     from rag_pipeline import retrieve_and_analyze
 
