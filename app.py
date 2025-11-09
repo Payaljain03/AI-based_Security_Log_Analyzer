@@ -9,6 +9,12 @@ import os
 from sentence_transformers import SentenceTransformer
 from rag_pipeline import retrieve_and_analyze  
 
+@st.cache_resource
+def load_embedding_model():
+    """Load and cache the SentenceTransformer model"""
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+
 # ----------------------------
 # App Title and Description
 # ----------------------------
@@ -80,7 +86,7 @@ if uploaded_file is not None:
 
         # Generate embeddings dynamically
         st.info("Creating embeddings and FAISS index...")
-        model = SentenceTransformer('all-MiniLM-L6-v2')
+        model = load_embedding_model()
         texts = prepare_text(df)
         embeddings = model.encode(texts, show_progress_bar=True, convert_to_numpy=True)
         index = build_faiss_index(embeddings)
