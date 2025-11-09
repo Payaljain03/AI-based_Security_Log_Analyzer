@@ -15,7 +15,7 @@ import sys
 # ----------------------------
 st.set_page_config(page_title="AI Security Log Analyzer", layout="wide")
 
-st.title("🧠 AI-based Security Log Analyzer (RAG + LLM)")
+st.title("AI-based Security Log Analyzer (RAG + LLM)")
 st.markdown("""
 Upload any **CSV / JSON / XML / Text log file**, and the system will:
 - Preprocess and normalize your logs  
