@@ -118,9 +118,7 @@ if uploaded_file is not None:
                 with st.spinner("🤖 Analyzing with LLM + RAG pipeline..."):
                     try:
                         result = retrieve_and_analyze(query, index, df)  # your RAG function
-                        st.subheader("📊 AI Insights Summary")
-                        st.write(result.get("summary", "No summary available."))
-
+                        st.caption("Automated analysis powered by AI.")
                         st.subheader("🚨 Suspicious IP Addresses")
                         st.write(result.get("suspicious_ips", "None detected."))
 
