@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
+import re
 
 # ✅ Updated LangChain imports (0.3.7 compatible)
 from langchain.prompts import PromptTemplate
@@ -84,9 +85,13 @@ def retrieve_and_analyze(query, index, df, top_k=3):
         summary = response[0].get("generated_text", "")
     else:
         summary = "No valid response from LLM."
+    
+    summary = re.sub(r"http\S+|www\S+|support@.+", "", summary)
+    summary = summary.split("University")[0]
 
     print("✅ Analysis complete.")
 
+    
     # Basic structured output
     return {
         "summary": summary.strip(),
@@ -99,22 +104,26 @@ def retrieve_and_analyze(query, index, df, top_k=3):
 # 🔹 Helper Functions (basic rule-based insights)
 # ===============================================================
 def extract_suspicious_ips(df):
-    """Find IPs linked with suspicious keywords (e.g., failed, denied, attack)."""
-    if "source_ip" not in df.columns:
-        return "No source_ip column found."
-
+    """Find IPs linked with suspicious keywords."""
+    import re
+    text_data = df.astype(str).agg(" ".join, axis=1)
     suspicious_keywords = ["failed", "denied", "unauthorized", "attack"]
-    mask = df.apply(lambda row: any(k in str(row).lower() for k in suspicious_keywords), axis=1)
-    ips = df.loc[mask, "source_ip"].unique().tolist()
-    return ips if ips else "No suspicious IPs detected."
+
+    ips = []
+    for line in text_data:
+        if any(k in line.lower() for k in suspicious_keywords):
+            ips += re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", line)
+
+    return list(set(ips)) if ips else "No suspicious IPs detected."
 
 def find_recurring_ips(df):
-    """Detect IPs that appear multiple times."""
-    if "source_ip" not in df.columns:
-        return "No source_ip column found."
-    recurring = df["source_ip"].value_counts()
-    rec_ips = recurring[recurring > 1].index.tolist()
-    return rec_ips if rec_ips else "No recurring IPs."
+    """Find IPs that occur multiple times."""
+    import re
+    text_data = df.astype(str).agg(" ".join, axis=1)
+    ips = re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", " ".join(text_data))
+    from collections import Counter
+    rec = [ip for ip, count in Counter(ips).items() if count > 1]
+    return rec if rec else "No recurring IPs."
 
 def generate_conclusion(text):
     """Produce a concise conclusion from the AI summary."""
