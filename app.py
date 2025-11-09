@@ -6,14 +6,7 @@ import faiss
 import json
 import xml.etree.ElementTree as ET
 import os
-from sentence_transformers import SentenceTransformer
-from src.rag_pipeline import retrieve_and_analyze
   
-
-@st.cache_resource
-def load_embedding_model():
-    """Load and cache the SentenceTransformer model"""
-    return SentenceTransformer('all-MiniLM-L6-v2')
 
 
 # ----------------------------
@@ -78,6 +71,13 @@ def build_faiss_index(embeddings):
 # Main Workflow
 # ----------------------------
 if uploaded_file is not None:
+    from sentence_transformers import SentenceTransformer
+    from src.rag_pipeline import retrieve_and_analyze
+
+    @st.cache_resource
+    def load_embedding_model():
+        return SentenceTransformer('all-MiniLM-L6-v2')
+      
     with st.spinner("🔍 Reading and processing your log file..."):
         df = load_file(uploaded_file)
 
