@@ -56,11 +56,17 @@ def load_file(file):
     return df
 
 def prepare_text(df):
-    """Combine all useful text columns into a single string for embeddings"""
+    """Combine useful columns into text for embeddings."""
     df = df.fillna('Unknown')
-    text_cols = [col for col in df.columns if df[col].dtype == 'object']
-    combined_text = df[text_cols].astype(str).agg(' | '.join, axis=1)
-    return combined_text.tolist()
+
+    # prioritize columns that actually hold log text
+    if "Message" in df.columns:
+        combined_text = df["Message"].astype(str).tolist()
+    else:
+        text_cols = [col for col in df.columns if df[col].dtype == 'object']
+        combined_text = df[text_cols].astype(str).agg(' | '.join, axis=1)
+    
+    return combined_text
 
 def build_faiss_index(embeddings):
     dim = embeddings.shape[1]
