@@ -7,10 +7,8 @@ import json
 import xml.etree.ElementTree as ET
 import os
 from sentence_transformers import SentenceTransformer
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-
-from rag_pipeline import retrieve_and_analyze  
+from src.rag_pipeline import retrieve_and_analyze
+  
 
 @st.cache_resource
 def load_embedding_model():
