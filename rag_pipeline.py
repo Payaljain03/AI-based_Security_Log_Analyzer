@@ -14,9 +14,9 @@ from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
 # Latest LangChain imports
-from langchain_core.prompts import PromptTemplate
-from langchain_classic.chains import LLMChain
-from langchain_community.llms import HuggingFacePipeline
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+from langchain.llms import HuggingFacePipeline
 
 # ================== Load FAISS Indexes and Datasets ==================
 aws_index_path = "/content/drive/MyDrive/AI-based_Security_Log_Analyzer/model/aws_index.faiss"
