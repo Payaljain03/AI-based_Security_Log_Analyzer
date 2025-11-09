@@ -6,6 +6,10 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 import re
+import ipaddress
+import requests
+from collections import Counter
+
 
 # ✅ Updated LangChain imports (0.3.7 compatible)
 from langchain.prompts import PromptTemplate
@@ -101,38 +105,72 @@ def retrieve_and_analyze(query, index, df, top_k=3):
     }
 
 # ===============================================================
-# 🔹 Helper Functions (basic rule-based insights)
+# 🔹 Helper Functions (rule-based + enriched insights)
 # ===============================================================
+
 def extract_suspicious_ips(df):
-    """Find IPs linked with suspicious keywords."""
-    import re
-    text_data = df.astype(str).agg(" ".join, axis=1)
-    suspicious_keywords = ["failed", "denied", "unauthorized", "attack"]
+    """Extract only valid IPv4s related to suspicious messages and enrich them."""
+    text_data = df.astype(str).agg(" ".join, axis=1).str.lower()
+    suspicious_keywords = ["failed", "denied", "unauthorized", "attack", "error"]
+    ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
     ips = []
     for line in text_data:
-        if any(k in line.lower() for k in suspicious_keywords):
-            ips += re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", line)
+        if any(k in line for k in suspicious_keywords):
+            for ip in ip_pattern.findall(line):
+                try:
+                    ipaddress.IPv4Address(ip)  # ✅ validates octets 0–255
+                    ips.append(ip)
+                except ipaddress.AddressValueError:
+                    pass
 
-    return list(set(ips)) if ips else "No suspicious IPs detected."
+    if ips:
+        unique_ips = list(set(ips))
+        enriched = [enrich_ip(ip) for ip in unique_ips]
+        return enriched
+    else:
+        return "No suspicious IPs detected."
 
 def find_recurring_ips(df):
-    """Find IPs that occur multiple times."""
-    import re
+    """Find IPs that occur multiple times in logs."""
     text_data = df.astype(str).agg(" ".join, axis=1)
-    ips = re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", " ".join(text_data))
-    from collections import Counter
+    ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+    ips = ip_pattern.findall(" ".join(text_data))
     rec = [ip for ip, count in Counter(ips).items() if count > 1]
     return rec if rec else "No recurring IPs."
 
-def generate_conclusion(text):
-    """Produce a concise conclusion from the AI summary."""
-    if "attack" in text.lower():
-        return "Possible malicious activity detected. Further investigation recommended."
-    elif "failed login" in text.lower():
-        return "Multiple failed login attempts observed. Potential brute-force pattern."
+def enrich_ip(ip):
+    """Fetch basic geo info for IP (public only)."""
+    try:
+        # Skip private IP ranges
+        if ip.startswith(("10.", "192.168.", "172.16.")):
+            return f"{ip} (Private)"
+        r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=2)
+        data = r.json()
+        country = data.get("country", "Unknown")
+        org = data.get("org", "Unknown")
+        return f"{ip} ({country}, {org})"
+    except Exception:
+        return f"{ip} (Unknown)"
+
+def generate_conclusion(summary, df=None):
+    """Generate actionable conclusion with evidence."""
+    base = summary.lower()
+
+    failed_count = (
+        df[df.astype(str).apply(lambda r: "failed" in " ".join(r).lower(), axis=1)].shape[0]
+        if df is not None else 0
+    )
+    ips = extract_suspicious_ips(df)
+    ip_count = len(ips) if isinstance(ips, list) else 0
+
+    if "attack" in base or ip_count > 0:
+        return f"⚠️ Possible malicious activity detected — {ip_count} suspicious IPs identified."
+    elif "failed login" in base or failed_count > 5:
+        return f"🚨 {failed_count} failed login attempts detected. Potential brute-force pattern."
     else:
-        return "No major anomalies detected based on the provided logs."
+        return "✅ No major anomalies detected in this log sample."
+
 
 # ===============================================================
 # 🔹 Example (for local debugging)
