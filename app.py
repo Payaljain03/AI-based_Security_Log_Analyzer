@@ -72,7 +72,7 @@ def build_faiss_index(embeddings):
 # ----------------------------
 if uploaded_file is not None:
     from sentence_transformers import SentenceTransformer
-    from src.rag_pipeline import retrieve_and_analyze
+    from rag_pipeline import retrieve_and_analyze
 
     @st.cache_resource
     def load_embedding_model():
