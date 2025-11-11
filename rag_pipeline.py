@@ -10,30 +10,37 @@ import ipaddress
 import requests
 from collections import Counter
 
-
-# ✅ Updated LangChain imports (0.3.7 compatible)
+# -----------------------------
+#  LangChain Imports (v0.3.7+ compatible)
+# -----------------------------
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain.llms import HuggingFacePipeline
+from langchain_community.llms import HuggingFacePipeline  # fixed import
 
-# ================== Load Embedding Model ==================
-print("🔹 Loading embedding model (MiniLM-L6-v2)....")
+# -----------------------------
+# Load Embedding Model
+# -----------------------------
+print("Loading embedding model (MiniLM-L6-v2)...")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
-# ================== Initialize LLM ==================
-print("🔹 Initializing fallback GPT2 pipeline...")
+# -----------------------------
+#  Initialize LLM
+# -----------------------------
+print("Initializing fallback GPT2 pipeline...")
 hf_pipeline = pipeline(
     "text-generation",
     model="gpt2",
-    max_new_tokens=400,   # balanced for Streamlit response speed
+    max_new_tokens=400,
     temperature=0.7
 )
 llm = HuggingFacePipeline(pipeline=hf_pipeline)
 
-# ================== Prompt Template ==================
+# -----------------------------
+#  Prompt Template
+# -----------------------------
 template = """
 You are a professional cybersecurity analyst.
-Analyze the given security logs and provide expert insights.
+Analyze the following security logs and provide expert insights.
 
 User Query:
 {query}
@@ -42,28 +49,61 @@ Relevant Logs:
 {context}
 
 Summarize your findings clearly:
-1. Identify suspicious activity (e.g., failed logins, unusual IPs)
-2. List any recurring IPs or patterns
-3. Provide a concise conclusion
+1. Identify suspicious activity (failed logins, unusual IPs, etc.)
+2. List any recurring IPs or suspicious patterns.
+3. Provide a short, clear conclusion.
 """
 prompt = PromptTemplate(template=template, input_variables=["query", "context"])
-
-# Use LLMChain for generating analysis
 chain = LLMChain(llm=llm, prompt=prompt)
 
 # ===============================================================
-# 🔹 Core Function: retrieve_and_analyze
-# Takes in user query, FAISS index, and DataFrame dynamically.
+# Core Function: retrieve_and_analyze
 # ===============================================================
 def retrieve_and_analyze(query, index, df, top_k=3):
-    print(f"\n🔹 Processing query: {query}")
+    print(f"\nProcessing query: {query}")
 
     # Convert query into embedding vector
     query_vec = embedder.encode([query])
 
-    # Retrieve top matches from FAISS index
+    # Search in FAISS index
     distances, results = index.search(query_vec, top_k)
-    matched_logs = df.iloc[results[0]].astype(str).agg(" | ".join, axis=1).tolist()
+
+    # --- Defensive Checks ---
+    if results is None or len(results[0]) == 0:
+        print("No matching logs found for query.")
+        return {
+            "summary": "No relevant logs found for the query.",
+            "suspicious_ips": [],
+            "recurring_ips": [],
+            "conclusion": "No data available to analyze."
+        }
+
+    valid_results = [i for i in results[0] if 0 <= i < len(df)]
+    if not valid_results:
+        print("FAISS returned out-of-range indexes.")
+        return {
+            "summary": "Error: FAISS index mismatch with dataset.",
+            "suspicious_ips": [],
+            "recurring_ips": [],
+            "conclusion": "Rebuild FAISS index and retry."
+        }
+
+    # Retrieve relevant logs safely
+    matched_logs = (
+        df.iloc[valid_results]
+        .astype(str)
+        .agg(" | ".join, axis=1)
+        .tolist()
+    )
+
+    if not matched_logs:
+        print("No relevant log entries found.")
+        return {
+            "summary": "No log entries found for the given query.",
+            "suspicious_ips": [],
+            "recurring_ips": [],
+            "conclusion": "No suspicious activity detected."
+        }
 
     # Limit context size to prevent GPT2 overflow
     max_context_chars = 800
@@ -74,10 +114,7 @@ def retrieve_and_analyze(query, index, df, top_k=3):
         else:
             break
 
-    if not context:
-        context = "No relevant logs found for this query."
-
-    print("🔹 Sending logs to LLM for analysis...")
+    print("Sending logs to LLM for analysis...")
     response = chain.invoke({"query": query, "context": context})
 
     # Extract response text safely
@@ -89,27 +126,28 @@ def retrieve_and_analyze(query, index, df, top_k=3):
         summary = response[0].get("generated_text", "")
     else:
         summary = "No valid response from LLM."
-    
+
+    # Clean output
     summary = re.sub(r"http\S+|www\S+|support@.+", "", summary)
-    summary = summary.split("University")[0]
+    summary = summary.strip().split("University")[0]
 
-    print("✅ Analysis complete.")
-
+    print("Analysis complete.")
     
-    # Basic structured output
     return {
-        "summary": summary.strip(),
+        "summary": summary,
         "suspicious_ips": extract_suspicious_ips(df),
         "recurring_ips": find_recurring_ips(df),
-        "conclusion": generate_conclusion(summary)
+        "conclusion": generate_conclusion(summary, df)
     }
 
 # ===============================================================
-# 🔹 Helper Functions (rule-based + enriched insights)
+# Helper Functions (rule-based + enriched insights)
 # ===============================================================
-
 def extract_suspicious_ips(df):
     """Extract only valid IPv4s related to suspicious messages and enrich them."""
+    if df is None or df.empty:
+        return []
+
     text_data = df.astype(str).agg(" ".join, axis=1).str.lower()
     suspicious_keywords = ["failed", "denied", "unauthorized", "attack", "error"]
     ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
@@ -119,7 +157,7 @@ def extract_suspicious_ips(df):
         if any(k in line for k in suspicious_keywords):
             for ip in ip_pattern.findall(line):
                 try:
-                    ipaddress.IPv4Address(ip)  # ✅ validates octets 0–255
+                    ipaddress.IPv4Address(ip)  # validate IP
                     ips.append(ip)
                 except ipaddress.AddressValueError:
                     pass
@@ -128,11 +166,12 @@ def extract_suspicious_ips(df):
         unique_ips = list(set(ips))
         enriched = [enrich_ip(ip) for ip in unique_ips]
         return enriched
-    else:
-        return "No suspicious IPs detected."
+    return "No suspicious IPs detected."
 
 def find_recurring_ips(df):
     """Find IPs that occur multiple times in logs."""
+    if df is None or df.empty:
+        return []
     text_data = df.astype(str).agg(" ".join, axis=1)
     ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
     ips = ip_pattern.findall(" ".join(text_data))
@@ -142,7 +181,6 @@ def find_recurring_ips(df):
 def enrich_ip(ip):
     """Fetch basic geo info for IP (public only)."""
     try:
-        # Skip private IP ranges
         if ip.startswith(("10.", "192.168.", "172.16.")):
             return f"{ip} (Private)"
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=2)
@@ -154,7 +192,7 @@ def enrich_ip(ip):
         return f"{ip} (Unknown)"
 
 def generate_conclusion(summary, df=None):
-    """Generate actionable conclusion with evidence."""
+    """Generate actionable conclusion based on detected patterns."""
     base = summary.lower()
 
     failed_count = (
@@ -165,28 +203,9 @@ def generate_conclusion(summary, df=None):
     ip_count = len(ips) if isinstance(ips, list) else 0
 
     if "attack" in base or ip_count > 0:
-        return f"⚠️ Possible malicious activity detected — {ip_count} suspicious IPs identified."
+        return f"Possible malicious activity detected — {ip_count} suspicious IPs identified."
     elif "failed login" in base or failed_count > 5:
-        return f"🚨 {failed_count} failed login attempts detected. Potential brute-force pattern."
+        return f"{failed_count} failed login attempts detected. Potential brute-force behavior."
     else:
-        return "✅ No major anomalies detected in this log sample."
+        return "No major anomalies detected in this log sample."
 
-
-# ===============================================================
-# 🔹 Example (for local debugging)
-# ===============================================================
-if __name__ == "__main__":
-    # Example dummy run
-    import faiss
-    dummy_data = pd.DataFrame({
-        "timestamp": ["t1", "t2"],
-        "source_ip": ["192.168.1.1", "192.168.1.2"],
-        "event": ["login failed", "port scan detected"]
-    })
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    embeds = model.encode(dummy_data.astype(str).agg(" | ".join, axis=1), convert_to_numpy=True)
-    dim = embeds.shape[1]
-    idx = faiss.IndexFlatL2(dim)
-    idx.add(embeds)
-    res = retrieve_and_analyze("suspicious login", idx, dummy_data)
-    print(res)
