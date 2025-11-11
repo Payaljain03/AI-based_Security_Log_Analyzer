@@ -18,7 +18,7 @@ st.set_page_config(page_title="AI Security Log Analyzer", layout="wide")
 
 st.title("AI-based Security Log Analyzer (RAG + LLM)")
 st.markdown("""
-Upload any **CSV / JSON / XML / Text log file**, and the system will:
+Upload any **CSV / JSON / Text log file**, and the system will:
 - Preprocess and normalize your logs  
 - Create embeddings & FAISS index (cached)  
 - Analyze them via your RAG pipeline  
@@ -36,8 +36,8 @@ from sentence_transformers import SentenceTransformer
 #  File Upload
 # ===============================================================
 uploaded_file = st.file_uploader(
-    "Upload your log file (CSV, JSON, XML, or TXT)",
-    type=["csv", "json", "xml", "txt"]
+    "Upload your log file (CSV, JSON or TXT)",
+    type=["csv", "json", "txt"]
 )
 
 # ===============================================================
@@ -51,32 +51,6 @@ def load_file(file):
     elif file.name.endswith(".json"):
         df = pd.json_normalize(json.load(file))
 
-    elif file.name.endswith(".xml"):
-        tree = ET.parse(file)
-        root = tree.getroot()
-        records = []
-
-        def parse_element(elem, parent_key=""):
-            """Recursively flatten nested XML elements"""
-            data = {}
-            for child in elem:
-                tag = f"{parent_key}.{child.tag}" if parent_key else child.tag
-                if len(child):
-                    data.update(parse_element(child, tag))
-                else:
-                    text = (child.text or "").strip()
-                    if child.attrib:
-                        for k, v in child.attrib.items():
-                            data[f"{tag}_{k}"] = v
-                    data[tag] = text
-            return data
-
-        for item in root.findall(".//*"):
-            if len(item):
-                records.append(parse_element(item))
-
-        df = pd.DataFrame(records).replace("", None)
-
     elif file.name.endswith(".txt"):
         lines = file.read().decode("utf-8").splitlines()
         df = pd.DataFrame({"log_line": lines})
@@ -86,7 +60,6 @@ def load_file(file):
         return None
 
     return df
-
 
 def prepare_text(df):
     """Combine useful columns into text for embeddings."""
@@ -100,12 +73,10 @@ def prepare_text(df):
 
     return combined_text
 
-
 @st.cache_resource
 def get_embedding_model():
     """Load and cache embedding model."""
     return SentenceTransformer("all-MiniLM-L6-v2")
-
 
 @st.cache_data(show_spinner=False)
 def create_index_from_df(df):
@@ -117,7 +88,6 @@ def create_index_from_df(df):
     index = faiss.IndexFlatL2(dim)
     index.add(embeddings)
     return index
-
 
 # ===============================================================
 #  Main Workflow
