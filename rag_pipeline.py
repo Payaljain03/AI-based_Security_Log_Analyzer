@@ -141,37 +141,47 @@ def retrieve_and_analyze(query, index, df, top_k=3):
     }
 
 # ===============================================================
-# Helper Functions (rule-based + enriched insights)
+# Helper Functions 
 # ===============================================================
-def extract_suspicious_ips(df):
-    """Extract only valid IPv4s related to suspicious messages and enrich them."""
-    if df is None or df.empty:
-        return []
 
+SAFE_ORGS = [
+    "Cloudflare", "Akamai", "Google", "Microsoft", "Amazon",
+    "Level 3", "Verizon", "AT&T", "SoftLayer", "Facebook"
+]
+
+def extract_suspicious_ips(df):
+    """Extract valid IPv4s related to suspicious or failed events and enrich them."""
     text_data = df.astype(str).agg(" ".join, axis=1).str.lower()
-    suspicious_keywords = ["failed", "denied", "unauthorized", "attack", "error"]
+    suspicious_keywords = ["failed login", "unauthorized", "brute", "denied", "attack"]
     ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
     ips = []
     for line in text_data:
+        # Only capture if truly security-related
         if any(k in line for k in suspicious_keywords):
             for ip in ip_pattern.findall(line):
                 try:
-                    ipaddress.IPv4Address(ip)  # validate IP
+                    ipaddress.IPv4Address(ip)
                     ips.append(ip)
                 except ipaddress.AddressValueError:
                     pass
 
-    if ips:
-        unique_ips = list(set(ips))
-        enriched = [enrich_ip(ip) for ip in unique_ips]
-        return enriched
-    return "No suspicious IPs detected."
+    if not ips:
+        return "No suspicious IPs detected."
+
+    unique_ips = list(set(ips))
+    enriched = []
+    for ip in unique_ips:
+        info = enrich_ip(ip)
+        # Skip safe infrastructure (Cloudflare, AWS, etc.)
+        if any(safe.lower() in info.lower() for safe in SAFE_ORGS):
+            continue
+        enriched.append(info)
+
+    return enriched if enriched else "No suspicious IPs detected."
 
 def find_recurring_ips(df):
-    """Find IPs that occur multiple times in logs."""
-    if df is None or df.empty:
-        return []
+    """Find IPs that occur multiple times."""
     text_data = df.astype(str).agg(" ".join, axis=1)
     ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
     ips = ip_pattern.findall(" ".join(text_data))
@@ -179,10 +189,10 @@ def find_recurring_ips(df):
     return rec if rec else "No recurring IPs."
 
 def enrich_ip(ip):
-    """Fetch basic geo info for IP (public only)."""
+    """Fetch basic geo + ASN info for IP, skip private ones."""
     try:
         if ip.startswith(("10.", "192.168.", "172.16.")):
-            return f"{ip} (Private)"
+            return f"{ip} (Private Network)"
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=2)
         data = r.json()
         country = data.get("country", "Unknown")
@@ -192,20 +202,32 @@ def enrich_ip(ip):
         return f"{ip} (Unknown)"
 
 def generate_conclusion(summary, df=None):
-    """Generate actionable conclusion based on detected patterns."""
+    """Generate accurate, context-aware conclusions with evidence."""
+    if df is None or df.empty:
+        return "No logs available for analysis."
+
+    text_data = df.astype(str).agg(" ".join, axis=1).str.lower()
+    failed_events = df[df.astype(str).apply(lambda r: "failed" in " ".join(r).lower(), axis=1)]
+    suspicious_ips = extract_suspicious_ips(df)
+    ip_count = len(suspicious_ips) if isinstance(suspicious_ips, list) else 0
+
+    # Check severity based on log level
+    if "Level" in df.columns:
+        levels = df["Level"].astype(str).str.lower()
+        has_critical = any("error" in lvl or "critical" in lvl for lvl in levels)
+    else:
+        has_critical = False
+
     base = summary.lower()
 
-    failed_count = (
-        df[df.astype(str).apply(lambda r: "failed" in " ".join(r).lower(), axis=1)].shape[0]
-        if df is not None else 0
-    )
-    ips = extract_suspicious_ips(df)
-    ip_count = len(ips) if isinstance(ips, list) else 0
-
-    if "attack" in base or ip_count > 0:
+    # Decision logic (context + evidence)
+    if ip_count > 0 and has_critical:
+        return f"Critical: {ip_count} suspicious IPs detected with high-severity events."
+    elif ip_count > 0:
         return f"Possible malicious activity detected — {ip_count} suspicious IPs identified."
-    elif "failed login" in base or failed_count > 5:
-        return f"{failed_count} failed login attempts detected. Potential brute-force behavior."
+    elif not failed_events.empty and has_critical:
+        return f"Multiple failed operations found ({len(failed_events)}). Investigate service integrity."
+    elif "attack" in base:
+        return "Possible attack patterns mentioned, verify manually."
     else:
-        return "No major anomalies detected in this log sample."
-
+        return "Normal system activity detected. No major threats found."
