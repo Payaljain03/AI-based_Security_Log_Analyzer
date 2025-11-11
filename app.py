@@ -26,7 +26,7 @@ Upload any **CSV / JSON / XML / Text log file**, and the system will:
 """)
 
 # ===============================================================
-#  Import pipeline globally (so it doesn’t reimport each run)
+#  Import pipeline globally 
 # ===============================================================
 sys.path.append(os.path.dirname(__file__))
 from rag_pipeline import retrieve_and_analyze
@@ -154,7 +154,7 @@ if uploaded_file is not None:
                     try:
                         result = retrieve_and_analyze(query, index, df)
 
-                        st.markdown("Threat Intelligence Report")
+                        st.markdown("## Threat Intelligence Report")
                         st.markdown("---")
 
                         # --- Two columns for IPs and Patterns ---
