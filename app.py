@@ -17,7 +17,7 @@ import sys
 # ----------------------------
 st.set_page_config(page_title="AI Security Log Analyzer", layout="wide")
 
-st.title("🧠 AI-based Security Log Analyzer (RAG + LLM)")
+st.title("AI-based Security Log Analyzer (RAG + LLM)")
 st.markdown("""
 Upload any **CSV / JSON / XML / Text log file**, and the system will:
 - Preprocess and normalize your logs  
@@ -27,15 +27,15 @@ Upload any **CSV / JSON / XML / Text log file**, and the system will:
 """)
 
 # ===============================================================
-# 📤 File Upload
+#  File Upload
 # ===============================================================
 uploaded_file = st.file_uploader(
-    "📤 Upload your log file (CSV, JSON, XML, or TXT)",
+    "Upload your log file (CSV, JSON, XML, or TXT)",
     type=["csv", "json", "xml", "txt"]
 )
 
 # ===============================================================
-# 📂 Helper: File Processing
+# Helper: File Processing
 # ===============================================================
 def load_file(file):
     """Load different log file formats into pandas DataFrame"""
@@ -80,7 +80,7 @@ def build_faiss_index(embeddings):
 
 
 # ===============================================================
-# 🚀 Main Workflow
+#  Main Workflow
 # ===============================================================
 if uploaded_file is not None:
     # ensure pipeline can be imported
@@ -93,15 +93,15 @@ if uploaded_file is not None:
     def load_embedding_model():
         return SentenceTransformer('all-MiniLM-L6-v2')
 
-    with st.spinner("🔍 Reading and processing your log file..."):
+    with st.spinner("Reading and processing your log file..."):
         df = load_file(uploaded_file)
 
     if df is not None:
-        st.success(f"✅ File loaded successfully! {df.shape[0]} rows detected.")
+        st.success(f"File loaded successfully! {df.shape[0]} rows detected.")
         st.write(df.head())
 
         # -----------------------------------------------------------
-        # 🔹 Create embeddings + FAISS index
+        #  Create embeddings + FAISS index
         # -----------------------------------------------------------
         st.info("Creating embeddings and FAISS index...")
         model = load_embedding_model()
@@ -110,36 +110,36 @@ if uploaded_file is not None:
             texts, show_progress_bar=True, convert_to_numpy=True
         )
         index = build_faiss_index(embeddings)
-        st.success("✅ Embeddings & FAISS index created successfully!")
+        st.success("Embeddings & FAISS index created successfully!")
 
         # -----------------------------------------------------------
-        # 💬 User Query Section
+        #  User Query Section
         # -----------------------------------------------------------
-        st.markdown("### 💬 Ask a Question about your Logs")
+        st.markdown("###Ask a Question about your Logs")
         query = st.text_area(
             "Example: 'Summarize suspicious IP activity' or 'Show failed login attempts'",
             height=100
         )
 
         # -----------------------------------------------------------
-        # 🔎 Analyze Button
+        # Analyze Button
         # -----------------------------------------------------------
-        if st.button("Analyze Logs 🔎"):
+        if st.button("Analyze Logs "):
             if not query.strip():
                 st.warning("Please enter a query before analyzing.")
             else:
-                with st.spinner("🤖 Analyzing with LLM + RAG pipeline..."):
+                with st.spinner("Analyzing with LLM + RAG pipeline..."):
                     try:
                         result = retrieve_and_analyze(query, index, df)
 
-                        st.markdown("## 🧠 Threat Intelligence Report")
+                        st.markdown("## Threat Intelligence Report")
                         st.markdown("---")
 
                         # --- Two columns for IPs and Patterns ---
                         col1, col2 = st.columns(2)
 
                         with col1:
-                            st.subheader("🚨 Suspicious IPs")
+                            st.subheader("Suspicious IPs")
                             ips = result.get("suspicious_ips", "None")
                             if isinstance(ips, list):
                                 st.table(pd.DataFrame({"IP / Geo": ips}))
@@ -147,7 +147,7 @@ if uploaded_file is not None:
                                 st.info(ips)
 
                         with col2:
-                            st.subheader("🔁 Recurring IPs")
+                            st.subheader("Recurring IPs")
                             rec = result.get("recurring_ips", "None")
                             if isinstance(rec, list):
                                 st.table(pd.DataFrame({"IP": rec}))
@@ -156,13 +156,13 @@ if uploaded_file is not None:
 
                         # --- Main Conclusion ---
                         st.markdown("---")
-                        st.subheader("🧩 Conclusion")
+                        st.subheader("Conclusion")
                         st.success(result.get("conclusion", "No conclusion generated."))
 
                         # --- Optional: show related failed logs ---
                         if "failed" in query.lower():
                             st.markdown("---")
-                            st.subheader("🗂️ Related Log Entries")
+                            st.subheader("Related Log Entries")
                             failed_logs = df[df.astype(str).apply(
                                 lambda r: "failed" in " ".join(r).lower(), axis=1
                             )]
