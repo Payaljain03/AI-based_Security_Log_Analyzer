@@ -137,7 +137,7 @@ if uploaded_file is not None:
         # -----------------------------------------------------------
         #  User Query Section
         # -----------------------------------------------------------
-        st.markdown("Ask a Question about your Logs")
+        st.markdown("## Ask a Question about your Logs")
         query = st.text_area(
             "Example: 'Summarize suspicious IP activity' or 'Show failed login attempts'",
             height=100
