@@ -8,4 +8,5 @@ langchain==0.3.7
 langchain-community==0.3.7
 plotly
 matplotlib
-torch
+torch==2.2.0
+
