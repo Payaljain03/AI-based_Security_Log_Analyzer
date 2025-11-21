@@ -58,7 +58,6 @@ def prepare_text(df: pd.DataFrame):
     df = df.fillna("Unknown")
     text_cols = [col for col in df.columns if df[col].dtype == "object"]
     if not text_cols:
-        # fallback: stringify entire row
         return df.astype(str).agg(" | ".join, axis=1).tolist()
     return df[text_cols].astype(str).agg(" | ".join, axis=1).tolist()
 
@@ -85,7 +84,7 @@ def create_index_from_df(df: pd.DataFrame):
 
 
 # ===============================================================
-# Main Workflow (UI appears immediately; heavy work deferred)
+# Main Workflow 
 # ===============================================================
 if uploaded_file is not None:
     # 1) Read file (fast)
@@ -104,20 +103,24 @@ if uploaded_file is not None:
         index = create_index_from_df(df)
     st.success("Embeddings & FAISS index ready (cached).")
 
-    # 3) Set HF token 
-    hf_token_present = False
+    # 3) Set HF token if present
     if "hf_token" in st.secrets:
         os.environ["HUGGINGFACEHUB_API_TOKEN"] = st.secrets["hf_token"]
-        hf_token_present = True
 
-    # 4) Deferred import of rag_pipeline AFTER token is set — prevents heavy download at app-start
-    with st.spinner("Loading RAG pipeline (this may download a model the first time)..."):
+    # -----------------------------------------------------------
+    # 4) Load RAG pipeline + Phi-3 Mini (lazy + cached)
+    # -----------------------------------------------------------
+    with st.spinner("Loading RAG pipeline (this may download the model first time)..."):
         sys.path.append(os.path.dirname(__file__))
         rag = importlib.import_module("rag_pipeline")
         importlib.reload(rag)
         retrieve_and_analyze = getattr(rag, "retrieve_and_analyze")
+        load_llm = getattr(rag, "load_llm")
+        llm = load_llm()  # <-- load Phi-3 ONCE and reuse
 
-    # 5) Query input & analysis
+    # -----------------------------------------------------------
+    # 5) Query + Analysis
+    # -----------------------------------------------------------
     st.markdown("## Ask a Question about your Logs")
     query = st.text_area(
         "Example: 'Which IPs tried to access the system repeatedly?' or 'Show failed login attempts'",
@@ -130,21 +133,18 @@ if uploaded_file is not None:
         else:
             with st.spinner("Analyzing with LLM + RAG pipeline..."):
                 try:
-                    # call pipeline (it handles intent & filtered context)
-                    result = retrieve_and_analyze(query, index, df)
+                    result = retrieve_and_analyze(query, index, df, llm=llm)
 
-                    # -------------------------------
-                    # Threat Intelligence Report UI
-                    # -------------------------------
                     st.markdown("## **Threat Intelligence Report**")
                     st.markdown("---")
 
+                    # Suspicious / recurring IPs
                     col1, col2 = st.columns(2)
 
                     with col1:
                         st.subheader("Suspicious IPs")
                         ips = result.get("suspicious_ips", [])
-                        if isinstance(ips, list) and ips:
+                        if ips:
                             st.table(pd.DataFrame({"IP / Geo": ips}))
                         else:
                             st.info("No suspicious IPs detected.")
@@ -152,35 +152,31 @@ if uploaded_file is not None:
                     with col2:
                         st.subheader("Recurring IPs")
                         rec = result.get("recurring_ips", [])
-                        if isinstance(rec, list) and rec:
+                        if rec:
                             st.table(pd.DataFrame({"IP": rec}))
                         else:
-                            st.info("No recurring IPs found.")
+                            st.info("No recurring IPs detected.")
 
-                    # Failed Users (if found)
+                    # Failed users
                     failed_users = result.get("failed_users", [])
-                    if isinstance(failed_users, list) and failed_users:
+                    if failed_users:
                         st.markdown("---")
                         st.subheader("Users with Failed Logins")
                         st.table(pd.DataFrame({"Username": failed_users}))
 
-                    # Final conclusion + LLM summary
+                    # Summary + conclusion
                     st.markdown("---")
                     st.subheader("Summary / Conclusion")
-                    summary = result.get("summary", "")
-                    conclusion = result.get("conclusion", "")
-                    if summary:
-                        st.write(summary)
-                    st.success(conclusion or "No conclusion generated.")
+                    st.write(result.get("summary", ""))
+                    st.success(result.get("conclusion", "No conclusion generated."))
 
-                    # Show relevant log entries returned by pipeline if present, else heuristic
+                    # Relevant logs
                     st.markdown("---")
                     st.subheader("Relevant Log Entries")
                     relevant = result.get("relevant_logs", None)
-                    if isinstance(relevant, list) and relevant:
+                    if relevant:
                         st.dataframe(pd.DataFrame({"log": relevant}).head(25))
                     else:
-                        # fallback: highlight rows containing ANY query words (simple heuristic)
                         mask = df.astype(str).apply(
                             lambda r: any(word in " ".join(r).lower() for word in query.lower().split()), axis=1
                         )
