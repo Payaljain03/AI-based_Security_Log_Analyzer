@@ -104,29 +104,15 @@ if uploaded_file is not None:
         index = create_index_from_df(df)
     st.success("Embeddings & FAISS index ready (cached).")
 
-    # 3) Set HF token (Streamlit Cloud: put your token into Secrets as key 'hf_token')
+    # 3) Set HF token 
     hf_token_present = False
     if "hf_token" in st.secrets:
         os.environ["HUGGINGFACEHUB_API_TOKEN"] = st.secrets["hf_token"]
         hf_token_present = True
-    else:
-        # optional: let user paste token interactively (only shown if not in secrets)
-        provided = st.text_input(
-            "Hugging Face token (optional, paste here if model requires authentication)",
-            type="password"
-        )
-        if provided:
-            os.environ["HUGGINGFACEHUB_API_TOKEN"] = provided
-            hf_token_present = True
-
-    if not hf_token_present:
-        st.info("If the HF model requires authentication, add `hf_token` in Streamlit Secrets or paste it above.")
 
     # 4) Deferred import of rag_pipeline AFTER token is set — prevents heavy download at app-start
     with st.spinner("Loading RAG pipeline (this may download a model the first time)..."):
-        # Ensure Python can import src if rag_pipeline is in repo root; adjust path if needed
         sys.path.append(os.path.dirname(__file__))
-        # importlib ensures fresh import if you re-run with changes
         rag = importlib.import_module("rag_pipeline")
         importlib.reload(rag)
         retrieve_and_analyze = getattr(rag, "retrieve_and_analyze")
