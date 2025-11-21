@@ -20,63 +20,33 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFacePipeline
 
-# -------------------------
-# Config: change model_name if needed
-# -------------------------
-MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"  # HF model
+
+MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 MAX_NEW_TOKENS = 600
 TEMPERATURE = 0.2
 
-# -------------------------
-# Load embedding model (cached on import)
-# -------------------------
-print("Loading sentence-transformer embedding model (all-MiniLM-L6-v2)...")
+print("Loading embedding model (MiniLM-L6-v2)...")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
-# -------------------------
-# Load the HF LLM (AutoModel) and wrap for LangChain
-# This attempts device_map='auto' and falls back to CPU if needed.
-# -------------------------
-def load_hf_pipeline(model_name=MODEL_NAME):
-    """Load HF tokenizer+model and return a text-generation pipeline."""
-    # use try/except to avoid failing import if device_map not available
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            device_map="auto",
-            torch_dtype=None,
-            trust_remote_code=True
-        )
-        gen = pipeline(
-            "text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=TEMPERATURE,
-            do_sample=False,
-            return_full_text=False
-        )
-        return gen
-    except Exception as e:
-        # fallback: try CPU loading (slower)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(model_name, device_map={"": "cpu"}, trust_remote_code=True)
-        gen = pipeline(
-            "text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=TEMPERATURE,
-            do_sample=False,
-            return_full_text=False
-        )
-        return gen
 
-print("Loading Phi-3 Mini instruct model (this may download weights)...")
-hf_gen_pipeline = load_hf_pipeline(MODEL_NAME)
-llm = HuggingFacePipeline(pipeline=hf_gen_pipeline)
+def load_llm():
+    """Lazy load Phi-3 Mini and wrap in HF + LangChain."""
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME, torch_dtype="auto", trust_remote_code=True
+    ).to("cpu")
 
+    text_gen = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=MAX_NEW_TOKENS,
+        temperature=TEMPERATURE,
+        do_sample=False,
+        return_full_text=False,
+    )
+    return HuggingFacePipeline(pipeline=text_gen)
+    
 # -------------------------
 # Prompt template optimized for log analysis
 # - short, explicit instructions
@@ -251,98 +221,46 @@ def build_faiss_from_texts(texts: list):
 # -------------------------
 # Main retrieve_and_analyze with intent routing
 # -------------------------
-def retrieve_and_analyze(query: str, index: faiss.IndexFlatL2, df: pd.DataFrame, top_k: int = 5):
-    """
-    query: user question
-    index: FAISS index for the full df (unused directly if we rebuild over filtered df)
-    df: original DataFrame
-    """
+def retrieve_and_analyze(query: str, index: faiss.IndexFlatL2, df: pd.DataFrame, llm=None, top_k: int = 5):
+    if llm is None:
+        llm = load_llm()
+
+    # intent → filtered logs
     intent = detect_intent(query)
     filtered_df = filter_df_by_intent(df, intent)
 
-    # Prepare text list for filtered df
-    text_cols = [col for col in filtered_df.columns if filtered_df[col].dtype == "object"]
-    if text_cols:
-        texts = filtered_df[text_cols].astype(str).agg(" | ".join, axis=1).tolist()
-    else:
-        texts = filtered_df.astype(str).agg(" | ".join, axis=1).tolist()
+    # combine text columns
+    text_cols = [c for c in filtered_df.columns if filtered_df[c].dtype == "object"]
+    texts = (
+        filtered_df[text_cols].astype(str).agg(" | ".join, axis=1).tolist()
+        if text_cols
+        else filtered_df.astype(str).agg(" | ".join, axis=1).tolist()
+    )
 
-    # Build a temporary FAISS index for the filtered context (fast enough for small slices)
+    # FAISS temporary search
     tmp = build_faiss_from_texts(texts)
     if tmp is None:
-        return {
-            "summary": "No text available for this query.",
-            "suspicious_ips": [],
-            "recurring_ips": [],
-            "failed_users": [],
-            "conclusion": "No data to analyze."
-        }
+        return default_empty()
     tmp_index, _ = tmp
 
-    # Encode the query and search
     query_vec = embedder.encode([query], convert_to_numpy=True)
     distances, results = tmp_index.search(query_vec, top_k)
 
-    # Defensive checks
-    if results is None or len(results) == 0 or len(results[0]) == 0:
-        return {
-            "summary": "No relevant logs found for the query.",
-            "suspicious_ips": [],
-            "recurring_ips": [],
-            "failed_users": [],
-            "conclusion": "No data available to analyze."
-        }
+    matched_logs = [texts[i] for i in results[0] if 0 <= i < len(texts)]
+    context = "\n".join(matched_logs)[:1200] or "No relevant text available."
 
-    # Collect matched logs (safe indexing)
-    matched_idx = [i for i in results[0] if 0 <= i < len(texts)]
-    matched_logs = [texts[i] for i in matched_idx] if matched_idx else []
+    chain = LLMChain(llm=llm, prompt=prompt)
+    raw = chain.run({"query": query, "context": context})  # 🔥 correct call for LC 0.3+
 
-    # Build the small context (fit into prompt)
-    max_context_chars = 1200
-    context = ""
-    for log in matched_logs:
-        if len(context) + len(log) + 1 <= max_context_chars:
-            context += log + "\n"
-        else:
-            break
+    summary = raw.strip()
 
-    if context.strip() == "":
-        context = "No relevant log text available."
-
-    # Invoke LLM chain
-    response = chain.invoke({"query": query, "context": context})
-
-    # Extract text from HF pipeline / chain
-    if isinstance(response, dict) and "text" in response:
-        summary = response["text"]
-    elif isinstance(response, str):
-        summary = response
-    elif isinstance(response, list):
-        # HF pipeline often returns list of dicts
-        summary = response[0].get("generated_text", "")
-    else:
-        summary = "No valid response from LLM."
-
-    # Clean the summary
-    summary = re.sub(r"http\S+|www\S+|support@.+", "", summary).strip()
-    # Remove stray long signatures if any
-    summary = summary.split("University")[0].strip()
-
-    # Rule-based extractions for structured outputs
-    suspicious_ips = extract_suspicious_ips(filtered_df)
-    recurring_ips = find_recurring_ips(filtered_df)
-    failed_users = extract_failed_users(filtered_df)
-    conclusion = generate_conclusion(summary, filtered_df)
-
-    # Return structured result
     return {
         "summary": summary,
-        "suspicious_ips": suspicious_ips,
-        "recurring_ips": recurring_ips,
-        "failed_users": failed_users,
-        "conclusion": conclusion
+        "suspicious_ips": extract_suspicious_ips(filtered_df),
+        "recurring_ips": find_recurring_ips(filtered_df),
+        "failed_users": extract_failed_users(filtered_df),
+        "conclusion": generate_conclusion(summary, filtered_df),
     }
-
 # -------------------------
 # generate_conclusion uses evidence + severity heuristics (keeps same behavior)
 # -------------------------
