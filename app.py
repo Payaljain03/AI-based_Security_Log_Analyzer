@@ -21,7 +21,7 @@ st.markdown("""
 Upload any **CSV / JSON / Text log file**, and the system will:
 - Preprocess and normalize your logs  
 - Create embeddings & FAISS index (cached)  
-- Analyze them via your RAG pipeline  
+- Analyze them via the RAG pipeline  
 - Return summarized insights, suspicious activity & conclusions  
 """)
 
@@ -44,43 +44,33 @@ uploaded_file = st.file_uploader(
 # Helper: File Processing
 # ===============================================================
 def load_file(file):
-    """Load different log file formats into pandas DataFrame"""
     if file.name.endswith(".csv"):
-        df = pd.read_csv(file)
+        return pd.read_csv(file)
 
     elif file.name.endswith(".json"):
-        df = pd.json_normalize(json.load(file))
+        return pd.json_normalize(json.load(file))
 
     elif file.name.endswith(".txt"):
         lines = file.read().decode("utf-8").splitlines()
-        df = pd.DataFrame({"log_line": lines})
+        return pd.DataFrame({"log_line": lines})
 
-    else:
-        st.error("Unsupported file format.")
-        return None
+    st.error("Unsupported file format.")
+    return None
 
-    return df
 
 def prepare_text(df):
-    """Combine useful columns into text for embeddings."""
     df = df.fillna("Unknown")
+    text_cols = [col for col in df.columns if df[col].dtype == "object"]
+    return df[text_cols].astype(str).agg(" | ".join, axis=1)
 
-    if "Message" in df.columns:
-        combined_text = df["Message"].astype(str).tolist()
-    else:
-        text_cols = [col for col in df.columns if df[col].dtype == "object"]
-        combined_text = df[text_cols].astype(str).agg(" | ".join, axis=1)
-
-    return combined_text
 
 @st.cache_resource
 def get_embedding_model():
-    """Load and cache embedding model."""
     return SentenceTransformer("all-MiniLM-L6-v2")
+
 
 @st.cache_data(show_spinner=False)
 def create_index_from_df(df):
-    """Create embeddings + FAISS index (cached for performance)."""
     model = get_embedding_model()
     texts = prepare_text(df)
     embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
@@ -97,25 +87,20 @@ if uploaded_file is not None:
         df = load_file(uploaded_file)
 
     if df is not None:
-        st.success(f"File loaded successfully! {df.shape[0]} rows detected.")
+        st.success(f"File loaded successfully — {df.shape[0]} rows detected.")
         st.dataframe(df.head())
 
         with st.spinner("Creating embeddings & FAISS index (cached)..."):
             index = create_index_from_df(df)
-        st.success("Embeddings & FAISS index ready (cached for reuse).")
 
-        # -----------------------------------------------------------
-        #  User Query Section
-        # -----------------------------------------------------------
+        st.success("Embeddings & FAISS index ready for analysis.")
+
         st.markdown("## Ask a Question about your Logs")
         query = st.text_area(
-            "Example: 'Summarize suspicious IP activity' or 'Show failed login attempts'",
+            "Example: 'Which IPs tried to access the system repeatedly?' or 'Show failed users'",
             height=100
         )
 
-        # -----------------------------------------------------------
-        # Analyze Button
-        # -----------------------------------------------------------
         if st.button("Analyze Logs"):
             if not query.strip():
                 st.warning("Please enter a query before analyzing.")
@@ -124,10 +109,12 @@ if uploaded_file is not None:
                     try:
                         result = retrieve_and_analyze(query, index, df)
 
-                        st.markdown("## Threat Intelligence Report")
+                        # -------------------------------
+                        # Threat Intelligence Report
+                        # -------------------------------
+                        st.markdown("## **Threat Intelligence Report**")
                         st.markdown("---")
 
-                        # --- Two columns for IPs and Patterns ---
                         col1, col2 = st.columns(2)
 
                         with col1:
@@ -146,20 +133,27 @@ if uploaded_file is not None:
                             else:
                                 st.info(rec)
 
-                        # --- Main Conclusion ---
+                        # Failed Users
+                        failed_users = result.get("failed_users", [])
+                        if isinstance(failed_users, list) and len(failed_users) > 0:
+                            st.markdown("---")
+                            st.subheader("Users with Failed Logins")
+                            st.table(pd.DataFrame({"Username": failed_users}))
+
+                        # Final conclusion
                         st.markdown("---")
                         st.subheader("Conclusion")
-                        st.success(result.get("conclusion", "No conclusion generated."))
+                        st.success(result.get("conclusion", "No conclusion found."))
 
-                        # --- Related Logs (only if relevant) ---
-                        if "failed" in query.lower():
-                            st.markdown("---")
-                            st.subheader("Related Log Entries")
-                            failed_logs = df[
-                                df.astype(str)
-                                .apply(lambda r: "failed" in " ".join(r).lower(), axis=1)
-                            ]
-                            st.dataframe(failed_logs.head(10))
+                        # Auto display relevant logs
+                        st.markdown("---")
+                        st.subheader("Relevant Log Entries")
+                        mask = df.astype(str).apply(
+                            lambda r: any(word in " ".join(r).lower()
+                                          for word in query.lower().split()),
+                            axis=1
+                        )
+                        st.dataframe(df[mask].head(25))
 
                     except Exception as e:
                         st.error(f"Error during analysis: {e}")
