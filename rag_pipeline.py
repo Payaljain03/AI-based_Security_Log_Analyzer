@@ -80,6 +80,7 @@ ACTION:
 <one line>
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["query", "context"])
+llm = load_llm()
 chain = LLMChain(llm=llm, prompt=prompt)
 
 # -------------------------
