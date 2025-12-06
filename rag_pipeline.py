@@ -1,5 +1,5 @@
 # rag_pipeline.py
-# RAG pipeline (Phi-3 Mini via Hugging Face) + intent detection + context filtering
+# RAG pipeline using Google Gemma-2B-it (safe, no trust_remote_code)
 
 import os
 import re
@@ -11,62 +11,64 @@ import pandas as pd
 import faiss
 
 from sentence_transformers import SentenceTransformer
+
+# HF model (Gemma)
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFacePipeline
 
 
-MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
-MAX_NEW_TOKENS = 600
-TEMPERATURE = 0.2
-
-# -------------------------------
-# FIX #1 — Remove global embedder
-# -------------------------------
-_embedder = None
-
-def get_embedder():
-    global _embedder
-    if _embedder is None:
-        print("Loading embedding model (MiniLM-L6-v2)...")
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedder
+# -------------------------
+# Stable, safe model
+# -------------------------
+MODEL_NAME = "google/gemma-2b-it"
+MAX_NEW_TOKENS = 400
+TEMPERATURE = 0.1
 
 
-# -------------------------------
-# LLM Loader
-# -------------------------------
+# -------------------------
+# Embedding Model
+# -------------------------
+print("Loading MiniLM embedding model...")
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+
+# -------------------------
+# LLM Loader (cached in app.py)
+# -------------------------
 def load_llm():
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    print("Loading Gemma-2B-it...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME, torch_dtype="auto", trust_remote_code=True
+        MODEL_NAME,
+        torch_dtype="auto"
     ).to("cpu")
 
-    text_gen = pipeline(
+    gen = pipeline(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,
         temperature=TEMPERATURE,
-        do_sample=False,
-        return_full_text=False,
+        do_sample=False
     )
-    return HuggingFacePipeline(pipeline=text_gen)
+
+    return HuggingFacePipeline(pipeline=gen)
 
 
-# -------------------------------
+# -------------------------
 # Prompt Template
-# -------------------------------
+# -------------------------
 prompt_template = """
 You are an experienced cybersecurity analyst. You will be given:
-- A short 1-3 sentence user query
-- A small set of relevant log lines (context)
+- A user query
+- A small set of relevant log lines
 
-Task:
-1) Provide a concise 1-3 sentence summary that directly answers the user's query.
-2) Provide a short Evidence section: up to 5 bullet points referencing specific log lines.
-3) Provide 1-line recommended action.
+Your task:
+1) Provide a clear 1–3 sentence summary answering the user's query
+2) Give 3–5 bullet points of evidence from context
+3) Give one-line recommended action
 
 User Query:
 {query}
@@ -74,184 +76,157 @@ User Query:
 Relevant Logs:
 {context}
 
-Answer format:
+FORMAT:
+
 SUMMARY:
-<1-3 sentences>
+<1–3 sentences>
 
 EVIDENCE:
-- <bullet>
-- <bullet>
+- point 1
+- point 2
+- point 3
 
 ACTION:
-<one sentence>
+<one line>
 """
+
 prompt = PromptTemplate(template=prompt_template, input_variables=["query", "context"])
 
 
-# -------------------------------
-# Intent detection
-# -------------------------------
+# -------------------------
+# Intent Detection
+# -------------------------
 def detect_intent(query: str) -> str:
     q = query.lower()
-    if "password" in q:
+    if any(x in q for x in ["password", "reset", "change"]):
         return "PASSWORD"
-    if "failed" in q or "login" in q or "authentication" in q:
+    if any(x in q for x in ["failed", "login", "logon", "auth"]):
         return "AUTH_FAILURE"
-    if "ip" in q or "access" in q or "connection" in q:
+    if any(x in q for x in ["ip", "address", "connection", "access"]):
         return "NETWORK"
-    if "error" in q or "exception" in q:
+    if any(x in q for x in ["error", "warning", "exception"]):
         return "ERRORS"
-    if "suspicious" in q or "summary" in q:
+    if "summary" in q or "suspicious" in q:
         return "SUMMARY"
     return "GENERAL"
 
 
-# -------------------------------
-# Context filtering
-# -------------------------------
-def filter_df_by_intent(df: pd.DataFrame, intent: str) -> pd.DataFrame:
+# -------------------------
+# Filtering by Intent
+# -------------------------
+def filter_df_by_intent(df, intent):
     if df is None or df.empty:
         return df
 
     lc = df.astype(str).agg(" ".join, axis=1).str.lower()
 
-    if intent == "AUTH_FAILURE":
-        keywords = ["failed", "logon failure", "authentication failed"]
-    elif intent == "PASSWORD":
-        keywords = ["password", "reset", "changed"]
-    elif intent == "NETWORK":
-        keywords = ["ip", "connection", "remote address", "source ip"]
-    elif intent == "ERRORS":
-        keywords = ["error", "exception", "critical"]
-    elif intent == "SUMMARY":
-        keywords = ["failed", "denied", "attack"]
-    else:
-        keywords = []
+    keywords = {
+        "AUTH_FAILURE": ["failed", "invalid", "denied", "authentication"],
+        "PASSWORD": ["password", "reset", "changed"],
+        "NETWORK": ["ip", "connection", "connected from", "remote", "src", "dst"],
+        "ERRORS": ["error", "exception", "critical"],
+        "SUMMARY": ["failed", "denied", "attack", "unauthorized"]
+    }.get(intent, [])
 
     if keywords:
         mask = lc.apply(lambda line: any(k in line for k in keywords))
         filtered = df.loc[mask]
         return filtered if not filtered.empty else df
+
     return df
 
 
-# -------------------------------
-# Extractors
-# -------------------------------
-def extract_suspicious_ips(df):
-    if df is None or df.empty:
-        return []
-
-    text_data = df.astype(str).agg(" ".join, axis=1).str.lower()
-    suspicious_keywords = ["failed login", "unauthorized", "brute", "denied", "attack"]
-    ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
-
-    ips = []
-    for line in text_data:
-        if any(k in line for k in suspicious_keywords):
-            for ip in ip_pattern.findall(line):
-                try:
-                    ipaddress.IPv4Address(ip)
-                    ips.append(ip)
-                except:
-                    pass
-
-    if not ips:
-        return []
-
-    unique_ips = list(set(ips))
-    enriched = []
-    for ip in unique_ips:
-        enriched.append(enrich_ip(ip))
-
-    return enriched
-
-
-def find_recurring_ips(df, min_count=2):
-    if df is None or df.empty:
-        return []
-    text_data = df.astype(str).agg(" ".join, axis=1)
-    ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
-    ips = ip_pattern.findall(" ".join(text_data))
-    return [ip for ip, count in Counter(ips).items() if count >= min_count]
-
+# -------------------------
+# IP + User Extractors
+# -------------------------
+SAFE_ORGS = ["Cloudflare", "Akamai", "Google", "Microsoft", "Amazon"]
 
 def enrich_ip(ip):
     try:
-        if ip.startswith(("10.", "192.168.", "172.16.")):
+        if ip.startswith(("10.", "172.16.", "192.168.")):
             return f"{ip} (Private)"
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=2)
         data = r.json()
-        return f"{ip} ({data.get('country')}, {data.get('org')})"
+        return f"{ip} ({data.get('country', 'NA')}, {data.get('org', 'NA')})"
     except:
         return f"{ip} (Unknown)"
 
+def extract_suspicious_ips(df):
+    if df is None or df.empty:
+        return []
+    txt = df.astype(str).agg(" ".join, axis=1)
+    pattern = r"\b\d{1,3}(?:\.\d{1,3}){3}\b"
+    ips = re.findall(pattern, " ".join(txt))
+    uniq = list(set(ips))
+    out = []
+    for ip in uniq:
+        info = enrich_ip(ip)
+        if not any(s.lower() in info.lower() for s in SAFE_ORGS):
+            out.append(info)
+    return out
+
+def find_recurring_ips(df):
+    if df is None or df.empty:
+        return []
+    pattern = r"\b\d{1,3}(?:\.\d{1,3}){3}\b"
+    txt = df.astype(str).agg(" ".join, axis=1)
+    ips = re.findall(pattern, " ".join(txt))
+    c = Counter(ips)
+    return [ip for ip, count in c.items() if count >= 2]
 
 def extract_failed_users(df):
     if df is None or df.empty:
         return []
-    text_data = df.astype(str).agg(" ".join, axis=1).str.lower()
-
-    keywords = ["failed", "authentication failed", "invalid password"]
-    user_pattern = re.compile(r"(?:user[:= ]+|username[:= ]+)([\w\\.@-]+)", re.I)
-
+    pattern = re.compile(r"(?:user|username|account name)[:= ]+([\w\.-]+)", re.I)
+    txt = df.astype(str).agg(" ".join, axis=1)
     users = []
-    for line in text_data:
-        if any(k in line for k in keywords):
-            users.extend(user_pattern.findall(line))
+    for line in txt:
+        users += pattern.findall(line)
     return list(set(users))
 
 
-# -------------------------------
-# FIX #2 — use embedder from get_embedder()
-# -------------------------------
+# -------------------------
+# FAISS Builder
+# -------------------------
 def build_faiss_from_texts(texts):
     if not texts:
         return None
-    embedder = get_embedder()
-    embeddings = embedder.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-    dim = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dim)
-    index.add(embeddings)
-    return index, embeddings
+    emb = embedder.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+    dim = emb.shape[1]
+    idx = faiss.IndexFlatL2(dim)
+    idx.add(emb)
+    return idx, emb
 
 
-# -------------------------------
-# retrieve_and_analyze
-# -------------------------------
-def retrieve_and_analyze(query, index, df, llm=None, top_k=5):
-    if llm is None:
-        llm = load_llm()
-
+# -------------------------
+# Main RAG
+# -------------------------
+def retrieve_and_analyze(query, index, df, llm):
     intent = detect_intent(query)
     filtered_df = filter_df_by_intent(df, intent)
 
-    # combine text
-    text_cols = [c for c in filtered_df.columns if filtered_df[c].dtype == "object"]
-    texts = (
-        filtered_df[text_cols].astype(str).agg(" | ".join, axis=1).tolist()
-        if text_cols else
-        filtered_df.astype(str).agg(" | ".join, axis=1).tolist()
-    )
-
-    tmp = build_faiss_from_texts(texts)
+    text_rows = filtered_df.astype(str).agg(" | ".join, axis=1).tolist()
+    tmp = build_faiss_from_texts(text_rows)
     if tmp is None:
-        return {"summary": "No data.", "conclusion": "No logs."}
+        return {"summary": "No logs.", "conclusion": "No data"}
 
-    tmp_index, _ = tmp
-    query_vec = get_embedder().encode([query], convert_to_numpy=True)
-    distances, results = tmp_index.search(query_vec, top_k)
+    idx, _ = tmp
+    qv = embedder.encode([query], convert_to_numpy=True)
+    distances, results = idx.search(qv, 5)
 
-    matched_logs = [texts[i] for i in results[0] if 0 <= i < len(texts)]
-    context = "\n".join(matched_logs)[:1200] or "No relevant logs."
+    chosen = [text_rows[i] for i in results[0] if i < len(text_rows)]
+    context = "\n".join(chosen)[:1200]
 
     chain = LLMChain(llm=llm, prompt=prompt)
-    summary = chain.run({"query": query, "context": context}).strip()
+    resp = chain.invoke({"query": query, "context": context})
+
+    summary = resp.get("text", resp)
 
     return {
         "summary": summary,
         "suspicious_ips": extract_suspicious_ips(filtered_df),
         "recurring_ips": find_recurring_ips(filtered_df),
         "failed_users": extract_failed_users(filtered_df),
-        "conclusion": "Analysis completed."
+        "relevant_logs": chosen,
+        "conclusion": "Analysis complete."
     }
