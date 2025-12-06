@@ -1,4 +1,4 @@
-# app.py – Final (Gemma-2B + RAG + caching)
+# app.py – Final (RAG + caching)
 
 import streamlit as st
 import pandas as pd
@@ -8,16 +8,14 @@ import os
 import sys
 import importlib
 
-
 st.set_page_config(page_title="AI Security Log Analyzer", layout="wide")
-
-st.title("AI-Based Security Log Analyzer (RAG + Gemma-2B)")
+st.title("AI-Based Security Log Analyzer (RAG)")
 st.markdown("""
 Upload any **CSV / JSON / TXT** log file.
 The system will:
 - Normalize logs  
 - Build embeddings + FAISS index  
-- Analyze via RAG + Gemma-2B  
+- Analyze via RAG 
 """)
 
 
@@ -123,4 +121,4 @@ if uploaded:
 
 
 st.markdown("---")
-st.caption("AI Security Log Analyzer (Gemma-2B)")
+st.caption("AI Security Log Analyzer")
