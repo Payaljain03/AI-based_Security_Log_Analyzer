@@ -9,8 +9,10 @@ This project demonstrates how **LLMs + vector search** can be applied to cyberse
 ## 🚀 Live Demo
 
 🔗 **Deployed Application:**  
-https://<your-streamlit-app-url>
+https://ai-basedsecurityloganalyzer.streamlit.app/
 
+**Interactive Dasboard**
+![Dashboard View](Dashboard.png)
 ---
 
 ## 🎯 Project Objective
