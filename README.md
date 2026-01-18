@@ -1,4 +1,4 @@
-# 🔐 AI-Based Security Log Analyzer (RAG)
+# AI-Based Security Log Analyzer (RAG)
 
 An **AI-powered Security Log Analysis web application** that uses **Retrieval-Augmented Generation (RAG)** to analyze security logs and generate meaningful threat intelligence using natural language queries.
 
@@ -6,16 +6,16 @@ This project demonstrates how **LLMs + vector search** can be applied to cyberse
 
 ---
 
-## 🚀 Live Demo
+## Live Demo
 
-🔗 **Deployed Application:**  
+**Deployed Application:**  
 https://ai-basedsecurityloganalyzer.streamlit.app/
 
 **Interactive Dasboard**
 ![Dashboard View](Dashboard.png)
 ---
 
-## 🎯 Project Objective
+## Project Objective
 
 To convert **raw security logs** into **actionable security insights** such as:
 - Suspicious IP addresses
@@ -27,9 +27,9 @@ using **AI + RAG architecture**.
 
 ---
 
-## 🧠 End-to-End Workflow (Core of the Project)
+## End-to-End Workflow (Core of the Project)
 
-### 1️⃣ Log Upload
+### 1. Log Upload
 - User uploads a security log file (`CSV / JSON / TXT`)
 - Logs may include:
   - IP addresses
@@ -38,28 +38,28 @@ using **AI + RAG architecture**.
 
 ---
 
-### 2️⃣ Data Preprocessing
+### 2. Data Preprocessing
 - Logs are loaded into a Pandas DataFrame
 - Each row is converted into a **structured text chunk**
 - Missing or irrelevant fields are safely handled
 
 ---
 
-### 3️⃣ Embedding Generation
+### 3. Embedding Generation
 - Each log entry is converted into a vector using:
   - **SentenceTransformer (`all-MiniLM-L6-v2`)**
 - These embeddings represent the semantic meaning of log events
 
 ---
 
-### 4️⃣ Vector Indexing (FAISS)
+### 4. Vector Indexing (FAISS)
 - Embeddings are stored in a **FAISS vector index**
 - Enables fast semantic similarity search over logs
 - Index is created **only once per uploaded file**
 
 ---
 
-### 5️⃣ User Query Processing
+### 5. User Query Processing
 - User asks a natural language question, e.g.:
   - *Summarize this log file*
   - *List suspicious IPs*
@@ -67,14 +67,14 @@ using **AI + RAG architecture**.
 
 ---
 
-### 6️⃣ Retrieval (RAG Step)
+### 6. Retrieval (RAG Step)
 - FAISS retrieves the **most relevant log entries**
 - Only the top matching logs are selected
 - This prevents hallucination and keeps responses grounded in data
 
 ---
 
-### 7️⃣ LLM Reasoning
+### 7. LLM Reasoning
 - Retrieved log context is passed to the LLM
 - Model used:
   - **TinyLlama/TinyLlama-1.1B-Chat-v1.0**
@@ -85,7 +85,7 @@ using **AI + RAG architecture**.
 
 ---
 
-### 8️⃣ Threat Intelligence Output
+### 8. Threat Intelligence Output
 - Results are displayed in the UI as:
   - Attack type
   - Risk level
@@ -95,7 +95,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## 🖥️ Application Interface
+## Application Interface
 
 - File upload panel
 - Interactive query box
@@ -104,7 +104,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
 ### Core
 - Python
@@ -124,7 +124,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## 💬 Example Questions You Can Ask
+## Example Questions You Can Ask
 
 - Summarize this log file
 - List suspicious IP addresses
@@ -135,7 +135,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## 🧪 Sample Output
+## Sample Output
 
 - **Attack Type:** Automated attack  
 - **Risk Level:** HIGH  
@@ -146,7 +146,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## 🎯 Use Cases
+## Use Cases
 
 - Cybersecurity learning projects
 - SOC-style log triage
@@ -156,7 +156,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## ⚠️ Limitations
+## Limitations
 
 - Designed for small to medium log files
 - CPU-based inference
@@ -164,7 +164,7 @@ using **AI + RAG architecture**.
 
 ---
 
-## 🔮 Future Improvements
+## Future Improvements
 
 - Real-time log ingestion
 - Severity scoring
@@ -174,15 +174,15 @@ using **AI + RAG architecture**.
 
 ---
 
-## 👩‍💻 Author
+## Author
 
 **Payal**    
 
-🔗 GitHub: https://github.com/Payaljain03  
-🔗 LinkedIn: https://linkedin.com/in/payaljain-ml
+GitHub: https://github.com/Payaljain03  
+LinkedIn: https://linkedin.com/in/payaljain-ml
 
 ---
 
-⭐ If you find this project useful, give it a star on GitHub!
+If you find this project useful, give it a star on GitHub!
 
 
